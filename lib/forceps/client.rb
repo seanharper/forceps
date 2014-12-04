@@ -55,7 +55,7 @@ module Forceps
       end
       head.const_set(class_name, build_new_remote_class(klass))
 
-      remote_class_for(full_class_name).establish_connection :remote
+      remote_class_for(full_class_name).establish_connection connection_for(full_class_name)
     end
 
     def build_new_remote_class(local_class)
@@ -99,6 +99,17 @@ module Forceps
         head = head.const_get(mod)
       end
       head
+    end
+
+    def connection_for(class_name)
+      connection = options[:connection]
+      if connection.is_a? Proc
+        connection.call(class_name)
+      elsif connection.is_a? String
+        connection
+      else
+        :remote
+      end
     end
 
     def make_associations_reference_remote_classes
