@@ -231,9 +231,11 @@ module Forceps
       end
 
       def copy_associated_objects_in_has_many(local_object, remote_object, association_name)
+        copied_objects = []
         remote_object.send(association_name).find_each do |remote_associated_object|
-          local_object.send(association_name) << copy(remote_associated_object)
+          copied_objects << copy(remote_associated_object)
         end
+        local_object.send "#{association_name}=", copied_objects
       end
 
       def copy_associated_objects_in_has_one(local_object, remote_object, association_name)
@@ -251,12 +253,14 @@ module Forceps
       end
 
       def copy_associated_objects_in_has_and_belongs_to_many(local_object, remote_object, association_name)
+        copied_objects = []
         remote_object.send(association_name).find_each do |remote_associated_object|
           cloned_local_associated_object = copy(remote_associated_object)
           unless local_object.send(association_name).where(id: cloned_local_associated_object.id).exists?
-            local_object.send(association_name) << cloned_local_associated_object
+            copied_objects << cloned_local_associated_object
           end
         end
+        local_object.send"#{association_name}=", copied_objects
       end
     end
   end
