@@ -31,9 +31,13 @@ module Forceps
         @level = 0
       end
 
-      def copy(remote_object)
-        copy_associated_objects_in_belongs_to(remote_object) unless copied_remote_objects[remote_object]
-        cached_local_copy(remote_object) || perform_copy(remote_object)
+      def copy(remote_object, path=[])
+        @initial_object ||= remote_object
+
+        detect_loops(remote_object, path)
+
+        copy_associated_objects_in_belongs_to(remote_object, path) unless copied_remote_objects[remote_object]
+        cached_local_copy(remote_object) || perform_copy(remote_object, path)
       end
 
       private
@@ -44,10 +48,10 @@ module Forceps
         cached_object
       end
 
-      def perform_copy(remote_object)
+      def perform_copy(remote_object, path)
         copied_object = local_copy_with_simple_attributes(remote_object)
         copied_remote_objects[remote_object] = copied_object
-        copy_associated_objects(copied_object, remote_object) unless was_reused?(copied_object)
+        copy_associated_objects(copied_object, remote_object, path) unless was_reused?(copied_object)
         copied_object
       end
 
@@ -202,10 +206,10 @@ module Forceps
         logger.debug "#{left_margin}#{message}"
       end
 
-      def copy_associated_objects(local_object, remote_object)
+      def copy_associated_objects(local_object, remote_object, path)
         with_nested_logging do
           [:has_many, :has_one, :has_and_belongs_to_many].each do |association_kind|
-            copy_objects_associated_by_association_kind(local_object, remote_object, association_kind)
+            copy_objects_associated_by_association_kind(local_object, remote_object, association_kind, path)
             local_object.save!(validate: false)
           end
         end
@@ -217,9 +221,9 @@ module Forceps
         decrease_level
       end
 
-      def copy_objects_associated_by_association_kind(local_object, remote_object, association_kind)
+      def copy_objects_associated_by_association_kind(local_object, remote_object, association_kind, path)
         associations_to_copy(remote_object, association_kind).collect(&:name).each do |association_name|
-          send "copy_associated_objects_in_#{association_kind}", local_object, remote_object, association_name
+          send "copy_associated_objects_in_#{association_kind}", local_object, remote_object, association_name, path
         end
       end
 
@@ -230,37 +234,53 @@ module Forceps
         end
       end
 
-      def copy_associated_objects_in_has_many(local_object, remote_object, association_name)
+      def copy_associated_objects_in_has_many(local_object, remote_object, association_name, path)
         copied_objects = []
         remote_object.send(association_name).find_each do |remote_associated_object|
-          copied_objects << copy(remote_associated_object)
+          copied_objects << copy(remote_associated_object, path + [[remote_object, association_name]])
         end
         local_object.send "#{association_name}=", copied_objects
       end
 
-      def copy_associated_objects_in_has_one(local_object, remote_object, association_name)
+      def copy_associated_objects_in_has_one(local_object, remote_object, association_name, path)
         remote_associated_object = remote_object.send(association_name)
-        local_object.send "#{association_name}=", remote_associated_object && copy(remote_associated_object)
+        local_object.send "#{association_name}=", remote_associated_object && copy(remote_associated_object, path + [[remote_object, association_name]])
       end
 
-      def copy_associated_objects_in_belongs_to(remote_object)
+      def copy_associated_objects_in_belongs_to(remote_object, path)
         with_nested_logging do
           associations_to_copy(remote_object, :belongs_to).collect(&:name).each do |association_name|
             remote_associated_object = remote_object.send(association_name)
-            copy(remote_associated_object) if remote_associated_object
+            copy(remote_associated_object, path + [[remote_object, association_name]]) if remote_associated_object
           end
         end
       end
 
-      def copy_associated_objects_in_has_and_belongs_to_many(local_object, remote_object, association_name)
+      def copy_associated_objects_in_has_and_belongs_to_many(local_object, remote_object, association_name, path)
         copied_objects = []
         remote_object.send(association_name).find_each do |remote_associated_object|
-          cloned_local_associated_object = copy(remote_associated_object)
+          cloned_local_associated_object = copy(remote_associated_object, path + [[remote_object, association_name]])
           unless local_object.send(association_name).where(id: cloned_local_associated_object.id).exists?
             copied_objects << cloned_local_associated_object
           end
         end
         local_object.send"#{association_name}=", copied_objects
+      end
+
+      def detect_loops(remote_object, path)
+        if @initial_object.class == remote_object.class && @initial_object.id != remote_object.id
+          "Loop detected - #{(path.map {|(path_object, association_name)| association_debug(path_object, association_name)}).join(', ')} - #{as_trace(remote_object)}".tap do |msg|
+            if @options[:raise_on_loops]
+              raise msg
+            else
+              debug msg
+            end
+          end
+        end
+      end
+
+      def association_debug(remote_object, association_name)
+        "#{as_trace(remote_object)}->#{association_name}"
       end
     end
   end
