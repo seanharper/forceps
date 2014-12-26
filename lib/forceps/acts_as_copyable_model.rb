@@ -64,7 +64,7 @@ module Forceps
       end
 
       def should_reuse_local_copy?(remote_object)
-        finders_for_reusing_classes.include?(remote_object.class.base_class)
+        finders_for_reusing_classes[remote_object.class.base_class].present?
       end
 
       def finders_for_reusing_classes
