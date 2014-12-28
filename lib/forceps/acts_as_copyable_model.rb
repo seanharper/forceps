@@ -22,11 +22,10 @@ module Forceps
     end
 
     class DeepCopier
-      attr_accessor :copied_remote_objects, :options, :level, :reused_local_objects
+      attr_accessor :copied_remote_objects, :options, :level
 
       def initialize(options)
         @copied_remote_objects = {}
-        @reused_local_objects = Set.new
         @options = options
         @level = 0
       end
@@ -49,18 +48,11 @@ module Forceps
       end
 
       def perform_copy(remote_object, path)
-        copied_object = local_copy_with_simple_attributes(remote_object)
-        copied_remote_objects[remote_object] = copied_object
-        copy_associated_objects(copied_object, remote_object, path) unless was_reused?(copied_object)
-        copied_object
-      end
-
-      def local_copy_with_simple_attributes(remote_object)
-        if should_reuse_local_copy?(remote_object)
-          find_or_clone_local_copy_with_simple_attributes(remote_object)
-        else
-          create_local_copy_with_simple_attributes(remote_object)
-        end
+        found_copy = find_local_copy_with_simple_attributes(remote_object) if should_reuse_local_copy?(remote_object)
+        local_copy = found_copy || create_local_copy_with_simple_attributes(remote_object)
+        copied_remote_objects[remote_object] = local_copy
+        copy_associated_objects(local_copy, remote_object, path) unless found_copy
+        local_copy
       end
 
       def should_reuse_local_copy?(remote_object)
@@ -71,23 +63,9 @@ module Forceps
         options[:reuse] || {}
       end
 
-      def find_or_clone_local_copy_with_simple_attributes(remote_object)
-        found_local_object = finder_for_remote_object(remote_object).call(remote_object)
-        if found_local_object
-          copy_simple_attributes(found_local_object, remote_object)
-          reused_local_objects << found_local_object
-          found_local_object
-        else
-          create_local_copy_with_simple_attributes(remote_object)
-        end
-      end
-
-      def was_reused?(local_object)
-        reused_local_objects.include? local_object
-      end
-
       def find_local_copy_with_simple_attributes(remote_object)
-        finder_for_remote_object(remote_object).call(remote_object)
+        found_local_object = finder_for_remote_object(remote_object).call(remote_object)
+        copy_simple_attributes(found_local_object, remote_object) if found_local_object
       end
 
       def finder_for_remote_object(remote_object)
