@@ -22,7 +22,7 @@ module Forceps
     end
 
     class DeepCopier
-      attr_accessor :copied_remote_objects, :options, :level
+      attr_accessor :options, :level
 
       def initialize(options)
         @copied_remote_objects = {}
@@ -35,14 +35,14 @@ module Forceps
 
         detect_loops(remote_object, path)
 
-        copy_associated_objects_in_belongs_to(remote_object, path) unless copied_remote_objects[remote_object]
+        copy_associated_objects_in_belongs_to(remote_object, path) unless was_copied?(remote_object)
         cached_local_copy(remote_object) || perform_copy(remote_object, path)
       end
 
       private
 
       def cached_local_copy(remote_object)
-        cached_object = copied_remote_objects[remote_object]
+        cached_object = local_copy_for(remote_object)
         debug "#{as_trace(remote_object)} from cache..." if cached_object
         cached_object
       end
@@ -50,9 +50,21 @@ module Forceps
       def perform_copy(remote_object, path)
         found_copy = find_local_copy_with_simple_attributes(remote_object) if should_reuse_local_copy?(remote_object)
         local_copy = found_copy || create_local_copy_with_simple_attributes(remote_object)
-        copied_remote_objects[remote_object] = local_copy
+        store_local_copy_for(remote_object, local_copy)
         copy_associated_objects(local_copy, remote_object, path) unless found_copy
         local_copy
+      end
+
+      def was_copied?(remote_object)
+        @copied_remote_objects[remote_object]
+      end
+
+      def store_local_copy_for(remote_object, local_copy)
+        @copied_remote_objects[remote_object] = local_copy
+      end
+
+      def local_copy_for(remote_object)
+        @copied_remote_objects[remote_object]
       end
 
       def should_reuse_local_copy?(remote_object)
@@ -66,6 +78,7 @@ module Forceps
       def find_local_copy_with_simple_attributes(remote_object)
         found_local_object = finder_for_remote_object(remote_object).call(remote_object)
         copy_simple_attributes(found_local_object, remote_object) if found_local_object
+        found_local_object
       end
 
       def finder_for_remote_object(remote_object)
