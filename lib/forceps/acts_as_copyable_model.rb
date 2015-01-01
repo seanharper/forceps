@@ -30,13 +30,17 @@ module Forceps
         @level = 0
       end
 
-      def copy(remote_object, path=[])
+      def copy(remote_object, association_attributes={}, path=[])
         @initial_object ||= remote_object
 
         detect_loops(remote_object, path)
 
-        copy_associated_objects_in_belongs_to(remote_object, path) unless was_copied?(remote_object)
-        cached_local_copy(remote_object) || perform_copy(remote_object, path)
+        if was_copied?(remote_object)
+          cached_local_copy(remote_object)
+        else
+          belongs_to_association_attributes = copy_associated_objects_in_belongs_to(remote_object, path)
+          perform_copy(remote_object, association_attributes.merge(belongs_to_association_attributes), path)
+        end
       end
 
       private
@@ -47,9 +51,9 @@ module Forceps
         cached_object
       end
 
-      def perform_copy(remote_object, path)
-        found_copy = find_local_copy_with_simple_attributes(remote_object) if should_reuse_local_copy?(remote_object)
-        local_copy = found_copy || create_local_copy_with_simple_attributes(remote_object)
+      def perform_copy(remote_object, association_attributes, path)
+        found_copy = find_local_copy_with_simple_attributes(remote_object, association_attributes) if should_reuse_local_copy?(remote_object)
+        local_copy = found_copy || create_local_copy_with_simple_attributes(remote_object, association_attributes)
         store_local_copy_for(remote_object, local_copy)
         copy_associated_objects(local_copy, remote_object, path) unless found_copy
         local_copy
@@ -75,9 +79,9 @@ module Forceps
         options[:reuse] || {}
       end
 
-      def find_local_copy_with_simple_attributes(remote_object)
+      def find_local_copy_with_simple_attributes(remote_object, association_attributes)
         found_local_object = finder_for_remote_object(remote_object).call(remote_object)
-        copy_simple_attributes(found_local_object, remote_object) if found_local_object
+        copy_simple_attributes(found_local_object, remote_object, association_attributes) if found_local_object
         found_local_object
       end
 
@@ -94,7 +98,7 @@ module Forceps
         end
       end
 
-      def create_local_copy_with_simple_attributes(remote_object)
+      def create_local_copy_with_simple_attributes(remote_object, association_attributes)
         debug "#{as_trace(remote_object)} copying..."
 
         base_class = base_local_class_for(remote_object)
@@ -102,7 +106,7 @@ module Forceps
         disable_all_callbacks_for(base_class)
 
         cloned_object = base_class.new
-        copy_attributes(cloned_object, simple_attributes_to_copy(remote_object))
+        copy_attributes(cloned_object, simple_attributes_to_copy(remote_object).merge(association_attributes))
         cloned_object.save!(validate: false)
         invoke_callbacks(:after_each, cloned_object, remote_object)
         cloned_object
@@ -174,10 +178,10 @@ module Forceps
         options[:global_exclude] || [:id]
       end
 
-      def copy_simple_attributes(target_local_object, source_remote_object)
+      def copy_simple_attributes(target_local_object, source_remote_object, association_attributes)
         debug "#{as_trace(source_remote_object)} reusing..."
         # update_columns skips callbacks too but not available in Rails 3
-        copy_attributes(target_local_object, simple_attributes_to_copy(source_remote_object))
+        copy_attributes(target_local_object, simple_attributes_to_copy(source_remote_object).merge(association_attributes))
         target_local_object.save!(validate: false)
       end
 
@@ -213,8 +217,9 @@ module Forceps
 
       def with_nested_logging
         increase_level
-        yield
+        result = yield
         decrease_level
+        result
       end
 
       def copy_objects_associated_by_association_kind(local_object, remote_object, association_kind, path)
@@ -231,23 +236,23 @@ module Forceps
       end
 
       def copy_associated_objects_in_has_many(local_object, remote_object, association_name, path)
-        copied_objects = []
         remote_object.send(association_name).find_each do |remote_associated_object|
-          copied_objects << copy(remote_associated_object, path + [[remote_object, association_name]])
+          copy(remote_associated_object, association_attribute_for(local_object, association_name), path + [[remote_object, association_name]])
         end
-        local_object.send "#{association_name}=", copied_objects
       end
 
       def copy_associated_objects_in_has_one(local_object, remote_object, association_name, path)
         remote_associated_object = remote_object.send(association_name)
-        local_object.send "#{association_name}=", remote_associated_object && copy(remote_associated_object, path + [[remote_object, association_name]])
+        copy(remote_associated_object, association_attribute_for(local_object, association_name), path + [[remote_object, association_name]]) if remote_associated_object
       end
 
       def copy_associated_objects_in_belongs_to(remote_object, path)
         with_nested_logging do
-          associations_to_copy(remote_object, :belongs_to).collect(&:name).each do |association_name|
+          associations_to_copy(remote_object, :belongs_to).collect(&:name).reduce({}) do |association_attributes, association_name|
             remote_associated_object = remote_object.send(association_name)
-            copy(remote_associated_object, path + [[remote_object, association_name]]) if remote_associated_object
+            copied = remote_associated_object ? copy(remote_associated_object, {}, path + [[remote_object, association_name]]) : nil
+            association_attributes[remote_object.class.reflect_on_association(association_name).foreign_key] = copied && copied.id
+            association_attributes
           end
         end
       end
@@ -255,7 +260,7 @@ module Forceps
       def copy_associated_objects_in_has_and_belongs_to_many(local_object, remote_object, association_name, path)
         copied_objects = []
         remote_object.send(association_name).find_each do |remote_associated_object|
-          cloned_local_associated_object = copy(remote_associated_object, path + [[remote_object, association_name]])
+          cloned_local_associated_object = copy(remote_associated_object, {}, path + [[remote_object, association_name]])
           unless local_object.send(association_name).where(id: cloned_local_associated_object.id).exists?
             copied_objects << cloned_local_associated_object
           end
@@ -277,6 +282,10 @@ module Forceps
 
       def association_debug(remote_object, association_name)
         "#{as_trace(remote_object)}->#{association_name}"
+      end
+
+      def association_attribute_for(object, association_name)
+        { object.class.reflect_on_association(association_name).foreign_key => object.id }
       end
     end
   end
