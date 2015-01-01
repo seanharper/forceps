@@ -56,19 +56,23 @@ module Forceps
         local_copy = found_copy || create_local_copy_with_simple_attributes(remote_object, association_attributes)
         store_local_copy_for(remote_object, local_copy)
         copy_associated_objects(local_copy, remote_object, path) unless found_copy
-        local_copy
+        to_summary(local_copy)
       end
 
       def was_copied?(remote_object)
-        @copied_remote_objects[remote_object]
+        local_copy_for(remote_object)
       end
 
       def store_local_copy_for(remote_object, local_copy)
-        @copied_remote_objects[remote_object] = local_copy
+        @copied_remote_objects[to_summary(remote_object)] = to_summary(local_copy)
       end
 
       def local_copy_for(remote_object)
-        @copied_remote_objects[remote_object]
+        @copied_remote_objects[to_summary(remote_object)]
+      end
+
+      def to_summary(target_object)
+        { class: target_object.class, id: target_object.id }
       end
 
       def should_reuse_local_copy?(remote_object)
@@ -251,7 +255,7 @@ module Forceps
           associations_to_copy(remote_object, :belongs_to).collect(&:name).reduce({}) do |association_attributes, association_name|
             remote_associated_object = remote_object.send(association_name)
             copied = remote_associated_object ? copy(remote_associated_object, {}, path + [[remote_object, association_name]]) : nil
-            association_attributes[remote_object.class.reflect_on_association(association_name).foreign_key] = copied && copied.id
+            association_attributes[remote_object.class.reflect_on_association(association_name).foreign_key] = copied && copied[:id]
             association_attributes
           end
         end
