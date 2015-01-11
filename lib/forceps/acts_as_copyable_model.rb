@@ -255,9 +255,10 @@ module Forceps
       def copy_associated_objects_in_belongs_to(remote_object, path)
         with_nested_logging do
           associations_to_copy(remote_object, :belongs_to).collect(&:name).reduce({}) do |association_attributes, association_name|
+            reflection = remote_object.class.reflect_on_association(association_name)
             remote_associated_object = remote_object.send(association_name)
             copied = remote_associated_object ? copy(remote_associated_object, {}, path + [[remote_object, association_name]]) : nil
-            association_attributes[remote_object.class.reflect_on_association(association_name).foreign_key] = copied && copied[:id]
+            association_attributes[reflection.foreign_key] = copied && key_for_association(reflection, remote_associated_object, copied)
             association_attributes
           end
         end
@@ -290,8 +291,20 @@ module Forceps
         "#{as_trace(remote_object)}->#{association_name}"
       end
 
-      def association_attribute_for(object, association_name)
-        { object.class.reflect_on_association(association_name).foreign_key => object.id }
+      def association_attribute_for(local_object, association_name)
+        reflection = local_object.class.reflect_on_association(association_name)
+        primary_key = reflection.association_primary_key(local_object.class)
+        { reflection.foreign_key => local_object.send(primary_key) }
+      end
+
+      def key_for_association(reflection, remote_associated_object, copied)
+        primary_key = reflection.association_primary_key(remote_associated_object.class)
+        if primary_key == :id
+          copied[:id]
+        else
+          local_copy = copied[:class].find copied[:id]
+          local_copy && local_copy.send(primary_key)
+        end
       end
 
       def has_many_filter_for(remote_object, association_name)
