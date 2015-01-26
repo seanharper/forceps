@@ -32,7 +32,7 @@ module Forceps
       end
 
       def copy(remote_object)
-        cached_local_copy(remote_object) || perform_copy(remote_object)
+        cached_local_copy(remote_object) || already_exists_local_copy(remote_object) || perform_copy(remote_object)
       end
 
       private
@@ -41,6 +41,19 @@ module Forceps
         cached_object = copied_remote_objects[remote_object]
         debug "#{as_trace(remote_object)} from cache..." if cached_object
         cached_object
+      end
+
+      def already_exists_local_copy(remote_object)
+        base_class = base_local_class_for(remote_object)
+        local_object = base_class.find(remote_object.id) rescue nil
+        if local_object
+          debug "#{as_trace(remote_object)} already existed locally..."
+          copied_remote_objects[remote_object] = local_object
+          copy_associated_objects(local_object, remote_object)
+          local_object
+        else
+          return nil
+        end
       end
 
       def perform_copy(remote_object)
@@ -109,7 +122,9 @@ module Forceps
 
         cloned_object = base_class.new
         copy_attributes(cloned_object, simple_attributes_to_copy(remote_object))
+        debug "#{as_trace(remote_object)} saving..."
         cloned_object.save!(validate: false)
+        debug "#{as_trace(remote_object)} invoking callbacks..."
         invoke_callbacks(:after_each, cloned_object, remote_object)
         cloned_object
       end
@@ -161,7 +176,7 @@ module Forceps
       end
 
       def simple_attributes_to_copy(remote_object)
-        remote_object.attributes.except('id').reject do |attribute_name|
+        remote_object.attributes.reject do |attribute_name|
           attributes_to_exclude(remote_object).include? attribute_name.to_sym
         end
       end
