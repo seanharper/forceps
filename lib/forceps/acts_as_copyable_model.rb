@@ -32,7 +32,7 @@ module Forceps
       end
 
       def copy(remote_object)
-        cached_local_copy(remote_object) || already_exists_local_copy(remote_object) || perform_copy(remote_object)
+        cached_local_copy(remote_object) || perform_copy(remote_object)
       end
 
       private
